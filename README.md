@@ -252,9 +252,10 @@ def apply\_filters(df: pd.DataFrame, cfg):
         result = result\[result\["column"] > threshold]
 ```
 
-
-
-
+<img width="475" height="396" alt="01" src="https://github.com/user-attachments/assets/2a304ca6-74ca-4d92-a731-c1879b847367" />
+<img width="316" height="146" alt="02" src="https://github.com/user-attachments/assets/3d66898c-d96d-4d23-95ce-f19ba3ac5cfc" />
+<img width="476" height="425" alt="03" src="https://github.com/user-attachments/assets/55c141dd-93d5-4455-a7d4-4e6605466679" />
+<img width="477" height="237" alt="04" src="https://github.com/user-attachments/assets/9fc6f459-29b9-4767-a485-b27957d39ddc" />
 
 \---
 
