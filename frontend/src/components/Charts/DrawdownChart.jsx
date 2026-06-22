@@ -1,0 +1,64 @@
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer
+} from 'recharts'
+import { format, parseISO } from 'date-fns'
+
+export default function DrawdownChart({ data }) {
+  if (!data || data.length === 0) {
+    return <div className="card text-center py-12 text-gray-500">No data to display</div>
+  }
+
+  const chartData = data.map(d => ({
+    date: d.date,
+    'Drawdown %': parseFloat(d.drawdown?.toFixed(2) || 0),
+  }))
+
+  const formatDate = (dateStr) => {
+    try {
+      return format(parseISO(dateStr), 'MMM yy')
+    } catch {
+      return dateStr
+    }
+  }
+
+  return (
+    <div className="card">
+      <h3 className="section-title">Drawdown (%)</h3>
+      <ResponsiveContainer width="100%" height={280}>
+        <AreaChart data={chartData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
+          <defs>
+            <linearGradient id="colorDrawdown" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis
+            dataKey="date"
+            tickFormatter={formatDate}
+            tick={{ fontSize: 12 }}
+            interval={Math.floor(chartData.length / 8)}
+          />
+          <YAxis
+            tickFormatter={v => `${v.toFixed(0)}%`}
+            tick={{ fontSize: 12 }}
+          />
+          <Tooltip
+            formatter={(value) => `${value.toFixed(2)}%`}
+            labelFormatter={(label) => formatDate(label)}
+            contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e5e7eb' }}
+          />
+          <Area
+            type="monotone"
+            dataKey="Drawdown %"
+            stroke="#ef4444"
+            fill="url(#colorDrawdown)"
+            strokeWidth={2}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
