@@ -1,0 +1,78 @@
+# Production overlay -- run alongside the base file rather than replacing it,
+# since db/redis/pgbouncer/migrate/seed-admin don't need anything different
+# in prod:
+#
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What this changes vs. the base file:
+#   - backend/celery-*: built from Dockerfile.prod (gunicorn, no dev deps),
+#     no source bind-mount (the image IS the deployed code, not a live-reload
+#     view into the host checkout), restart policy for host reboots/crashes.
+#   - backend: no longer publishes 8000 to the host -- only `frontend`
+#     (nginx) is public; the API is reached through its /api/ proxy.
+#   - frontend: built from Dockerfile.prod (static build served by nginx)
+#     instead of running the Vite dev server; this container is the public
+#     edge -- see frontend/nginx.conf for the reverse-proxy + TLS notes.
+services:
+  db:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  pgbouncer:
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    command: >-
+      gunicorn app.main:app -k uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4}
+      --access-logfile - --error-logfile -
+    volumes: !reset []
+    ports: !reset []
+    restart: unless-stopped
+
+  celery-worker-backtest:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    volumes: !reset []
+    restart: unless-stopped
+
+  celery-worker-ingestion:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    volumes: !reset []
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    volumes: !reset []
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_SENTRY_DSN: ${SENTRY_DSN_FRONTEND:-}
+    command: !override [nginx, -g, "daemon off;"]
+    environment: !reset {}
+    volumes: !reset []
+    ports: !override
+      - "${HTTP_PORT:-80}:80"
+    restart: unless-stopped

@@ -1,0 +1,33 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# curl is only needed for the container healthcheck below.
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements/ requirements/
+
+# requirements/prod.txt pulls in base.txt plus gunicorn -- dev-only tooling
+# (ruff, mypy, pytest, ipdb) never makes it into this image.
+RUN pip install --no-cache-dir -r requirements/prod.txt
+
+# Copy app code
+COPY . .
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Shell form (not an exec-form JSON array) so ${GUNICORN_WORKERS} expands at
+# container start -- celery-worker-*/celery-beat services reuse this same
+# image but override `command:` in docker-compose.prod.yml, so this CMD only
+# ever runs for the `backend` service itself.
+CMD gunicorn app.main:app -k uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} \
+    --access-logfile - --error-logfile -

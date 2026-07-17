@@ -1,0 +1,30 @@
+FROM node:18-alpine AS build
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+# Vite inlines VITE_* env vars into the bundle at build time, not at
+# container start -- so this has to be a build ARG, not a runtime
+# `environment:` entry in docker-compose.prod.yml.
+ARG VITE_SENTRY_DSN=
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
+RUN npm run build
+
+# Serves the static build and reverse-proxies /api to the backend service --
+# this container is the public edge in docker-compose.prod.yml, so there's
+# no separate top-level nginx service.
+FROM nginx:1.27-alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget -q --spider http://localhost:80/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
