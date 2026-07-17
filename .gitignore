@@ -18,8 +18,11 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to the repo root (not a bare `lib/`) -- an unanchored pattern
+# also matches frontend/src/lib/, a real source directory, and silently
+# hides new files added there from `git status`/`git add`.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
