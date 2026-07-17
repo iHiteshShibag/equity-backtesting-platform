@@ -197,6 +197,24 @@ cp .env.example .env   # VITE_API_URL, optionally VITE_SENTRY_DSN
 npm run dev                          # runs at http://localhost:5173
 ```
 
+### Option C: Production deployment
+
+`docker-compose.prod.yml` is an overlay on top of the base file (not a replacement) — `db`/`redis`/`pgbouncer`/`migrate`/`seed-admin` don't need anything different in prod, so it only overrides what does:
+
+```bash
+cp .env.example .env    # set real SECRET_KEY/ADMIN_PASSWORD, ENVIRONMENT=production, CORS_ORIGINS
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+What changes vs. the dev compose file:
+
+* **`backend`/`celery-*`** build from `backend/Dockerfile.prod` (installs `requirements/prod.txt`, no dev tooling) and run under **gunicorn** with `uvicorn.workers.UvicornWorker` instead of `uvicorn --reload`. No source bind-mount — the image is the deployed code, not a live view into the host checkout. `GUNICORN_WORKERS` (default 4) controls worker count.
+* **`backend`** no longer publishes port 8000 to the host — only `frontend` is public.
+* **`frontend`** builds from `frontend/Dockerfile.prod`: a static Vite build served by **nginx** (`frontend/nginx.conf`), which also reverse-proxies `/api/`, `/docs`, `/redoc`, and `/openapi.json` to the `backend` service so the browser only ever talks to one origin. `HTTP_PORT` (default 80) controls the published host port. `/metrics` (Prometheus) is blocked at this edge — it's meant for an internal scraper, not public access.
+* All services get `restart: unless-stopped`.
+
+**TLS**: the nginx config ships with a plain `listen 80` server block. For a real domain, get a cert (e.g. `certbot certonly --standalone -d yourdomain.com`), mount `/etc/letsencrypt` into the `frontend` container, and add a `listen 443 ssl` server block to `frontend/nginx.conf` pointing at the mounted cert/key — then redirect port 80 to 443.
+
 ### Environment variables
 
 Three separate `.env.example` files document configuration at different levels:
@@ -235,7 +253,7 @@ Other backend settings (see `backend/app/core/config.py` for full defaults): `DB
 backtesting-platform/
 ├── backend/
 │   ├── app/
-│   │   ├── core/             # Settings (config.py), logging/Sentry setup (observability.py), rate limiting (rate_limit.py), email (email.py)
+│   │   ├── core/             # Settings (config.py), logging/Sentry setup (observability.py), rate limiting (rate_limit.py), email (email.py), Redis response caching (cache.py), defensive response headers (security_headers.py)
 │   │   ├── db/                # Base declarative class + session/engine
 │   │   ├── modules/
 │   │   │   ├── auth/          # JWT auth, User model, ToS-acceptance gate
@@ -258,8 +276,9 @@ backtesting-platform/
 │   │   ├── base.txt            # Runtime deps (FastAPI, SQLAlchemy, Celery, yfinance, etc.)
 │   │   ├── dev.txt             # + ruff, mypy, black, pytest, httpx, ipdb
 │   │   └── prod.txt            # + gunicorn
-│   ├── pytest.ini
-│   ├── Dockerfile
+│   ├── pytest.ini              # pytest-cov wired in, 80% coverage floor (--cov-fail-under)
+│   ├── Dockerfile               # dev image (uvicorn --reload via docker-compose.yml's command)
+│   ├── Dockerfile.prod          # prod image: gunicorn + uvicorn.workers.UvicornWorker
 │   ├── .env.example
 │   └── README.md
 ├── frontend/
@@ -280,15 +299,19 @@ backtesting-platform/
 │   │   └── index.css           # Tailwind + custom styles
 │   ├── index.html
 │   ├── vite.config.js
+│   ├── vitest.config.js        # Vitest + jsdom, extends vite.config.js
 │   ├── tailwind.config.js
 │   ├── package.json
-│   ├── Dockerfile
+│   ├── Dockerfile               # dev image (Vite dev server)
+│   ├── Dockerfile.prod          # prod image: static build served by nginx
+│   ├── nginx.conf                # prod nginx: SPA fallback, /api reverse proxy, security headers
 │   └── .env.example
 ├── scripts/
 │   ├── bootstrap.py            # Repo-level bootstrap helper
 │   └── check_paths.py          # Repo-level path/sanity checker
 ├── docker-compose.yml
-└── .github/workflows/ci.yml    # Backend (ruff, mypy, pytest w/ Redis service) + frontend (build) CI
+├── docker-compose.prod.yml     # Production overlay (gunicorn, nginx, no dev bind-mounts) -- see "Production deployment"
+└── .github/workflows/ci.yml    # Backend (ruff, mypy, pytest w/ Redis) + frontend (lint, vitest, build) + docker-build (backend/frontend prod images)
 ```
 
 ---
@@ -304,7 +327,10 @@ backtesting-platform/
 5. **Metrics** → computes CAGR, Sharpe, Sortino, Max Drawdown, Calmar, Win Rate
 6. **Saved Strategies** → `celery-beat` runs `strategies.check_due` daily, re-running due strategies and emailing owners
 7. **Rate limiting** → SlowAPI enforces per-organization-tier limits (Redis-backed, so shared across replicas) on top of auth/ToS gating
-8. **Observability** → structured JSON logs to stdout always; Sentry error tracking is enabled only when `SENTRY_DSN` is set (backend/Celery) — no-ops otherwise
+8. **Caching** → `app/core/cache.py` caches a handful of read-heavy, interactive endpoints (`/api/backtest/universe-count`, `/api/stocks/list`) in Redis for a few minutes; reads/writes fail open on any Redis error, so a cache blip degrades to "slower," never "broken"
+9. **Circuit breaker** → both ingestion fetchers (`fetcher.py`, `fundamentals_screener.py`) abort early after ~15 consecutive per-ticker failures instead of grinding through the rest of the universe against a source that's blocking/down; an aborted or fully-failed run pages Sentry
+10. **Observability** → structured JSON logs to stdout always; Sentry error tracking is enabled only when `SENTRY_DSN` is set (backend/Celery) — no-ops otherwise; `/metrics` exposes Prometheus request-count/latency histograms (blocked from public access at the prod nginx edge — see `frontend/nginx.conf`)
+11. **Security headers** → every response gets HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a strict CSP (`default-src 'none'`, relaxed only for `/docs`/`/redoc`), etc. — see `app/core/security_headers.py`
 
 ### Frontend Flow
 
@@ -335,15 +361,25 @@ backtesting-platform/
 ```bash
 cd backend
 source venv/bin/activate
-pytest -q                 # full suite (unit + integration)
+pytest -q                 # full suite (unit + integration); pytest.ini wires in coverage automatically
 pytest tests/unit -q      # engine/task logic only
-pytest tests/integration -q  # router-level tests (need Redis reachable for rate-limit tests)
+pytest tests/integration -q  # router-level tests (need Redis reachable for rate-limit + cache tests)
+```
+
+`pytest.ini` always runs with `--cov=app --cov-report=term-missing --cov-fail-under=80` — the suite fails if coverage drops below 80% (currently ~88%), separately from whether the tests themselves pass.
+
+```bash
+cd frontend
+npm test              # vitest run — lib/format, lib/errors, useAsyncList hook, LoginScreen component
+npm run test:watch    # same, in watch mode
+npm run test:coverage # with a coverage report (no enforced floor yet — only a handful of modules have tests so far)
 ```
 
 CI (`.github/workflows/ci.yml`) runs on every push to `main` and every PR:
 
-* **Backend job:** spins up a Redis service container, installs `requirements/dev.txt`, runs `ruff check app`, `mypy app` (non-blocking), and `pytest -q`
-* **Frontend job:** `npm ci` + `npm run build`
+* **Backend job:** spins up a Redis service container, installs `requirements/dev.txt`, runs `ruff check app`, `mypy app` (non-blocking — see the job's comments for why), and `pytest -q` (coverage-gated per above)
+* **Frontend job:** `npm ci`, `npm run lint`, `npm test`, `npm run build`
+* **docker-build job:** builds `backend/Dockerfile.prod` and `frontend/Dockerfile.prod` (build-only — no registry configured yet, so nothing is pushed) to catch Dockerfile/build-context breakage before it reaches a deploy
 
 ---
 
@@ -385,14 +421,18 @@ A previous ingestion run is still marked `running`. If it's genuinely stuck (e.g
 ## Optional Enhancements
 
 * [ ] Prebuilt strategy templates
-* [x] Docker containerization
+* [x] Docker containerization (dev **and** production — see `docker-compose.prod.yml`)
 * [x] Saved strategies with rebalance-due email alerts
 * [x] Async backtest execution via job queue
-* [x] Sentry error tracking (backend + frontend)
+* [x] Sentry error tracking (backend + frontend), including on ingestion circuit-breaker trips/full failures
+* [x] Prometheus metrics (`/metrics`) + Redis-backed response caching for hot read endpoints
+* [x] Frontend test suite (Vitest + React Testing Library) and backend coverage enforcement (80% floor)
 * [ ] Real-time strategy simulation
 * [ ] Machine learning model selection
-* [ ] Licensed market-data vendor (replace yfinance/Screener.in scraping)
+* [ ] Licensed market-data vendor (replace yfinance/Screener.in scraping — the circuit breaker in `fetcher.py`/`fundamentals_screener.py` makes a source outage fail fast and page Sentry rather than silently degrade, but doesn't remove the underlying fragility of an unlicensed scrape)
 * [ ] Full multi-tenant billing (Stripe/Razorpay) on top of the org/tier scaffolding
+* [ ] OpenTelemetry distributed tracing (Sentry APM + `/metrics` cover errors/request-level metrics today; no tracing backend is configured yet)
+* [ ] CD pipeline — CI builds and discards Docker images today; wiring up a registry push + deploy step needs a chosen registry/host first
 
 ---
 
