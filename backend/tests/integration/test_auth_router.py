@@ -42,6 +42,35 @@ def test_login_with_correct_password_returns_tokens(db_session, auth_client):
     assert "refresh_token" in response.cookies
 
 
+def test_refresh_cookie_is_samesite_lax_outside_production(db_session, auth_client, monkeypatch):
+    from app.modules.auth import router as auth_router_module
+
+    monkeypatch.setattr(auth_router_module.settings, "ENVIRONMENT", "development")
+    _create_user(db_session)
+
+    response = auth_client.post("/api/auth/login", json={"email": "user@example.com", "password": "s3cret-pass"})
+
+    set_cookie = response.headers.get("set-cookie", "")
+    assert "samesite=lax" in set_cookie.lower()
+    assert "secure" not in set_cookie.lower()
+
+
+def test_refresh_cookie_is_samesite_none_in_production(db_session, auth_client, monkeypatch):
+    """SameSite=Lax blocks the cookie on cross-site fetch/XHR -- if frontend
+    and backend are deployed to separate domains (e.g. Vercel + Railway),
+    Lax would silently break the refresh flow on every page reload."""
+    from app.modules.auth import router as auth_router_module
+
+    monkeypatch.setattr(auth_router_module.settings, "ENVIRONMENT", "production")
+    _create_user(db_session)
+
+    response = auth_client.post("/api/auth/login", json={"email": "user@example.com", "password": "s3cret-pass"})
+
+    set_cookie = response.headers.get("set-cookie", "")
+    assert "samesite=none" in set_cookie.lower()
+    assert "secure" in set_cookie.lower()
+
+
 def test_login_with_wrong_password_is_rejected(db_session, auth_client):
     _create_user(db_session)
 

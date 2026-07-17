@@ -26,6 +26,18 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/auth"
 
+def _refresh_cookie_samesite() -> str:
+    """Lax blocks the cookie on cross-site fetch/XHR (only allowed on
+    top-level navigations) -- fine when frontend and backend share an origin
+    (the prod nginx setup), but breaks refresh entirely when they're on
+    separate domains (e.g. a Vercel-hosted frontend calling a Railway/Render-
+    hosted backend). None requires Secure, which is already gated on
+    ENVIRONMENT == "production" (i.e. always HTTPS by the time this matters)
+    -- safe to always use None in production regardless of same- or
+    cross-origin deployment. Evaluated per-call (like `secure` below), not
+    baked in at import time, so it reflects the actual runtime environment."""
+    return "none" if settings.ENVIRONMENT == "production" else "lax"
+
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
     response.set_cookie(
@@ -33,7 +45,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         value=token,
         httponly=True,
         secure=settings.ENVIRONMENT == "production",
-        samesite="lax",
+        samesite=_refresh_cookie_samesite(),
         path=REFRESH_COOKIE_PATH,
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     )
@@ -92,7 +104,15 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(key=REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
+    # Must match the attributes set_cookie used -- a mismatched
+    # secure/samesite on the deleting Set-Cookie header can leave the
+    # original cookie in place in some browsers instead of clearing it.
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        secure=settings.ENVIRONMENT == "production",
+        samesite=_refresh_cookie_samesite(),
+    )
     return {"detail": "logged out"}
 
 
