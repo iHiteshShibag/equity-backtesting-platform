@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 
+# If this many *consecutive* tickers fail (each already retried MAX_RETRIES
+# times with backoff), the source itself is almost certainly blocking/down
+# rather than having isolated per-ticker issues -- stop early instead of
+# spending the next ~10 minutes hammering it for the remaining tickers and
+# risking a longer IP-level block.
+CIRCUIT_BREAKER_CONSECUTIVE_FAILURES = 15
+
 # Yahoo's public chart endpoint returns OHLCV without needing a crumb/cookie
 # negotiation, unlike the quoteSummary API that yfinance's .info uses — so it
 # isn't subject to Yahoo throttling crumb issuance for a given source IP.
@@ -82,6 +89,8 @@ def fetch_and_store_prices(session: Session, start: str = "2015-01-01", end: str
     rows = []
     succeeded = 0
     failed_tickers = []
+    consecutive_failures = 0
+    aborted = False
 
     for idx, ticker in enumerate(NIFTY100_TICKERS):
         stock_id = ticker_map.get(ticker)
@@ -91,7 +100,17 @@ def fetch_and_store_prices(session: Session, start: str = "2015-01-01", end: str
         chart = _fetch_chart(ticker, period1, period2)
         if chart is None:
             failed_tickers.append(ticker)
+            consecutive_failures += 1
+            if consecutive_failures >= CIRCUIT_BREAKER_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "Aborting price ingestion after %d consecutive failures "
+                    "(last ticker: %s) -- source likely blocking/down",
+                    consecutive_failures, ticker,
+                )
+                aborted = True
+                break
             continue
+        consecutive_failures = 0
 
         timestamps = chart.get("timestamp") or []
         quote = (chart.get("indicators", {}).get("quote") or [{}])[0]
@@ -120,8 +139,18 @@ def fetch_and_store_prices(session: Session, start: str = "2015-01-01", end: str
 
         if ticker_rows > 0:
             succeeded += 1
+            consecutive_failures = 0
         else:
             failed_tickers.append(ticker)
+            consecutive_failures += 1
+            if consecutive_failures >= CIRCUIT_BREAKER_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "Aborting price ingestion after %d consecutive failures "
+                    "(last ticker: %s) -- source likely blocking/down",
+                    consecutive_failures, ticker,
+                )
+                aborted = True
+                break
 
         if (idx + 1) % 10 == 0:
             logger.info("Fetched %d/%d tickers", idx + 1, len(NIFTY100_TICKERS))
@@ -129,7 +158,10 @@ def fetch_and_store_prices(session: Session, start: str = "2015-01-01", end: str
 
     if not rows:
         logger.warning("No price rows to insert")
-        return {"succeeded": succeeded, "failed": len(failed_tickers), "failed_tickers": failed_tickers}
+        return {
+            "succeeded": succeeded, "failed": len(failed_tickers),
+            "failed_tickers": failed_tickers, "aborted": aborted,
+        }
 
     chunk_size = 1000
     total = 0
@@ -147,4 +179,5 @@ def fetch_and_store_prices(session: Session, start: str = "2015-01-01", end: str
         "succeeded": succeeded,
         "failed": len(failed_tickers),
         "failed_tickers": failed_tickers,
+        "aborted": aborted,
     }

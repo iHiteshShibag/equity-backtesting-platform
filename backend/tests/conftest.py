@@ -12,6 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.core.cache import get_redis_client
 from app.core.rate_limit import limiter
 from app.db.base import Base
 from app.db.session import get_db
@@ -30,6 +31,17 @@ def reset_rate_limits():
     the suite pass/fail depending on unrelated prior runs rather than its own
     logic."""
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def reset_cache():
+    """app/core/cache.py also stores into this same shared Redis instance,
+    keyed only on business params (e.g. filter values), not on which test is
+    running -- without clearing it, a value cached by an earlier test would
+    leak into a later test that happens to use the same params against
+    different DB fixture state."""
+    for key in get_redis_client().scan_iter("cache:*"):
+        get_redis_client().delete(key)
     yield
 
 # In-memory SQLite, not the configured DATABASE_URL — keeps the suite fast

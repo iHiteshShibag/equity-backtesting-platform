@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.cache import cached
 from app.core.ownership import get_owned_or_404
 from app.core.rate_limit import limiter, org_tier_rate_limit
 from app.modules.auth.deps import get_current_user, require_tos_accepted
@@ -86,7 +87,18 @@ def list_jobs(
     )
 
 
+def _universe_count_cache_key(*args, **kwargs) -> str:
+    # Fundamentals only change once a day (the scheduled ingestion run), so
+    # folding today's date into the key -- rather than an explicit
+    # invalidation hook -- is enough to bound staleness to "at most a day".
+    return (
+        f"{kwargs.get('market_cap_min')}:{kwargs.get('market_cap_max')}:"
+        f"{kwargs.get('roce_min')}:{kwargs.get('pat_positive')}:{date.today()}"
+    )
+
+
 @router.get("/universe-count", response_model=UniverseCountOut)
+@cached("universe-count", ttl_seconds=300, key_fn=_universe_count_cache_key)
 def universe_count(
     market_cap_min: float | None = Query(None),
     market_cap_max: float | None = Query(None),

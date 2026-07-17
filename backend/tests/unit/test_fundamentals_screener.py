@@ -146,3 +146,20 @@ def test_fetch_company_page_falls_back_to_standalone_when_consolidated_is_stale(
 
     periods = _extract_periods(_section_table(soup, "profit-loss"))
     assert max(d.year for _, d in periods) == 2024
+
+
+def test_fetch_fundamentals_screener_trips_circuit_breaker_after_consecutive_failures(db_session, monkeypatch):
+    """If screener.in itself is blocking/down, every ticker will fail the same
+    way -- the circuit breaker should stop well short of trying all ~100
+    tickers rather than burning through the whole universe against a dead
+    source."""
+    from app.modules.market_data.fetcher import ensure_stocks_exist
+
+    ensure_stocks_exist(db_session)
+    monkeypatch.setattr(mod, "fetch_company_page", lambda *a, **k: None)
+
+    result = mod.fetch_fundamentals_screener(db_session)
+
+    assert result["aborted"] is True
+    assert result["succeeded"] == 0
+    assert result["failed"] == mod.CIRCUIT_BREAKER_CONSECUTIVE_FAILURES

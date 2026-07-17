@@ -3,12 +3,14 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.core.observability import setup_logging, setup_sentry
 from app.core.rate_limit import limiter
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.modules.auth.router import router as auth_router
 from app.modules.backtest.router import router as backtest_router
 from app.modules.stocks.router import router as stocks_router
@@ -55,6 +57,12 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Exposes /metrics (request counts/latency histograms by path+status). Not
+# included in the OpenAPI schema since it's for scrapers, not API consumers --
+# see deploy/nginx.conf, which blocks external access to this path in prod.
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 @app.exception_handler(Exception)

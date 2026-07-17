@@ -14,6 +14,13 @@ from app.modules.market_data.universe import NIFTY100_TICKERS
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
+
+# Same rationale as fetcher.py's CIRCUIT_BREAKER_CONSECUTIVE_FAILURES: past
+# this many consecutive per-ticker failures, screener.in itself is almost
+# certainly blocking/down -- stop early rather than burning through the rest
+# of the universe against a dead source.
+CIRCUIT_BREAKER_CONSECUTIVE_FAILURES = 15
+
 BASE_URL = "https://www.screener.in/company/{ticker}/{view}"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -224,6 +231,8 @@ def fetch_fundamentals_screener(session: Session) -> dict:
 
     success = 0
     failed_tickers = []
+    consecutive_failures = 0
+    aborted = False
 
     for ticker in NIFTY100_TICKERS:
         stock = ticker_map.get(ticker)
@@ -249,6 +258,7 @@ def fetch_fundamentals_screener(session: Session) -> dict:
 
             session.commit()
             success += 1
+            consecutive_failures = 0
             logger.info("%s: %d historical periods", ticker, len(historical_rows))
 
             time.sleep(0.5)
@@ -257,11 +267,21 @@ def fetch_fundamentals_screener(session: Session) -> dict:
             failed_tickers.append(ticker)
             session.rollback()
             logger.warning("Failed fetching fundamentals for %s", ticker, exc_info=True)
+            consecutive_failures += 1
+            if consecutive_failures >= CIRCUIT_BREAKER_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "Aborting fundamentals ingestion after %d consecutive "
+                    "failures (last ticker: %s) -- source likely blocking/down",
+                    consecutive_failures, ticker,
+                )
+                aborted = True
+                break
 
-    logger.info("Completed. Success=%d, Failed=%d", success, len(failed_tickers))
+    logger.info("Completed. Success=%d, Failed=%d, Aborted=%s", success, len(failed_tickers), aborted)
 
     return {
         "succeeded": success,
         "failed": len(failed_tickers),
         "failed_tickers": failed_tickers,
+        "aborted": aborted,
     }
