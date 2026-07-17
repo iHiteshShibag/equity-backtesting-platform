@@ -12,6 +12,11 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Celery beat's local schedule database -- runtime state, regenerated on
+# every start, never meant to be version-controlled.
+celerybeat-schedule
+celerybeat.pid
 build/
 develop-eggs/
 dist/
