@@ -1,0 +1,5 @@
+# Production-only additions: process manager.
+# Installed on top of the core runtime dependencies.
+-r base.txt
+
+gunicorn==22.0.0

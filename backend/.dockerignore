@@ -1,0 +1,53 @@
+# =========================================================
+# Backend .dockerignore
+# Keeps the FastAPI build context small and prevents host-only
+# artifacts (venvs, caches, secrets) from leaking into the image.
+# =========================================================
+
+# Virtual environments — never ship the host venv into the image
+.venv/
+venv/
+env/
+ENV/
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.mypy_cache/
+.ruff_cache/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+tests/
+
+# Environment & secrets — image gets its config via docker-compose env vars
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Version control
+.git/
+.gitignore
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docs / misc (not needed at runtime)
+README.md
+*.md

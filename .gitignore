@@ -1,0 +1,134 @@
+# =========================================================
+# Equity Backtesting Platform — Root .gitignore
+# Keeps the repo lightweight and safe for ZIP/email transfer.
+# Covers Python, Node, Docker, and OS junk for Ubuntu <-> Windows.
+# =========================================================
+
+# ---------------------------------------------------------
+# Python
+# ---------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---------------------------------------------------------
+# Virtual environments (any naming convention, any OS)
+# ---------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ---------------------------------------------------------
+# Environment files (never commit real secrets)
+# ---------------------------------------------------------
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------------------------------------------------------
+# Node / Frontend
+# ---------------------------------------------------------
+node_modules/
+dist/
+build/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.eslintcache
+
+# ---------------------------------------------------------
+# Databases / local data dumps
+# ---------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
+
+# ---------------------------------------------------------
+# Logs
+# ---------------------------------------------------------
+*.log
+logs/
+
+# ---------------------------------------------------------
+# Testing / coverage
+# ---------------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# ---------------------------------------------------------
+# IDE / editors (cross-platform)
+# ---------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ---------------------------------------------------------
+# OS junk — Windows
+# ---------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ---------------------------------------------------------
+# OS junk — macOS
+# ---------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ---------------------------------------------------------
+# OS junk — Linux
+# ---------------------------------------------------------
+.directory
+.Trash-*
+.fuse_hidden*
+.nfs*
+
+# ---------------------------------------------------------
+# Docker (local overrides only — shared compose files stay tracked)
+# ---------------------------------------------------------
+docker-compose.override.yml
