@@ -37,6 +37,16 @@ services:
       gunicorn app.main:app -k uvicorn.workers.UvicornWorker
       --bind 0.0.0.0:${PORT:-8000} --workers ${GUNICORN_WORKERS:-4}
       --access-logfile - --error-logfile -
+    # Scoped to this service only -- celery-worker-*/celery-beat below share
+    # the same image but never open an HTTP port, so this must not live on
+    # the image itself (Dockerfile.prod) or it'd apply to them too. See
+    # Dockerfile.prod's comment for how that bit Railway deploy promotion.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-8000}/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     volumes: !reset []
     ports: !reset []
     restart: unless-stopped

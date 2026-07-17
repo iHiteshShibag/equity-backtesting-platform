@@ -2,7 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# curl is only needed for the container healthcheck below.
+# curl is only needed for the backend service's healthcheck (see
+# docker-compose.prod.yml / Railway's per-service Healthcheck Path) --
+# kept in the shared image since celery-worker-*/celery-beat reuse it too.
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
@@ -21,14 +23,24 @@ COPY . .
 
 EXPOSE 8000
 
-# Platforms like Railway/Render inject a dynamic PORT and healthcheck against
-# it directly (not whatever's manually configured on a public domain) -- a
-# hardcoded 8000 here means the app never actually listens on the port the
-# platform probes, so every deploy fails its healthcheck and never gets
-# promoted, even though the process itself boots fine. Defaulting to 8000
-# keeps `docker-compose.prod.yml` (which never sets PORT) working unchanged.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
+# No image-level HEALTHCHECK here -- celery-worker-*/celery-beat reuse this
+# same image with `command:` overridden in docker-compose.prod.yml, and
+# never open an HTTP port, so a blanket `curl .../health` instruction baked
+# into the image would apply to them too and never pass. On Railway this
+# isn't cosmetic: a failing container health check blocks deploy promotion,
+# so every push silently failed to roll out to the worker services while
+# `backend` (which does serve /health) kept deploying fine -- discovered via
+# Railway's deploy diagnosis showing Network > Healthcheck failing with zero
+# HTTP logs on the celery-beat/worker services. The `backend` service's
+# healthcheck now lives one layer up, scoped to just that service: Railway's
+# own per-service "Healthcheck Path" setting, and the `healthcheck:` block on
+# `backend` in docker-compose.prod.yml for non-Railway deploys.
+
+# Platforms like Railway/Render inject a dynamic PORT and probe it directly
+# (not whatever's manually configured on a public domain) -- a hardcoded 8000
+# here means the app never actually listens on the port the platform probes,
+# so gunicorn must bind to it explicitly regardless of where the healthcheck
+# itself is defined.
 
 # Shell form (not an exec-form JSON array) so ${GUNICORN_WORKERS}/${PORT}
 # expand at container start -- celery-worker-*/celery-beat services reuse
