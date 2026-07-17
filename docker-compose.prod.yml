@@ -29,9 +29,13 @@ services:
       dockerfile: Dockerfile.prod
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
+    # ${PORT:-8000} matches Dockerfile.prod's CMD -- irrelevant here (nothing
+    # sets PORT for a docker-compose deploy, so this always resolves to
+    # 8000), but keeps both in sync now that a platform-injected PORT
+    # matters on Railway/Render.
     command: >-
       gunicorn app.main:app -k uvicorn.workers.UvicornWorker
-      --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4}
+      --bind 0.0.0.0:${PORT:-8000} --workers ${GUNICORN_WORKERS:-4}
       --access-logfile - --error-logfile -
     volumes: !reset []
     ports: !reset []

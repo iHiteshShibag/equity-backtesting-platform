@@ -21,13 +21,19 @@ COPY . .
 
 EXPOSE 8000
 
+# Platforms like Railway/Render inject a dynamic PORT and healthcheck against
+# it directly (not whatever's manually configured on a public domain) -- a
+# hardcoded 8000 here means the app never actually listens on the port the
+# platform probes, so every deploy fails its healthcheck and never gets
+# promoted, even though the process itself boots fine. Defaulting to 8000
+# keeps `docker-compose.prod.yml` (which never sets PORT) working unchanged.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# Shell form (not an exec-form JSON array) so ${GUNICORN_WORKERS} expands at
-# container start -- celery-worker-*/celery-beat services reuse this same
-# image but override `command:` in docker-compose.prod.yml, so this CMD only
-# ever runs for the `backend` service itself.
+# Shell form (not an exec-form JSON array) so ${GUNICORN_WORKERS}/${PORT}
+# expand at container start -- celery-worker-*/celery-beat services reuse
+# this same image but override `command:` in docker-compose.prod.yml, so
+# this CMD only ever runs for the `backend` service itself.
 CMD gunicorn app.main:app -k uvicorn.workers.UvicornWorker \
-    --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-4} \
+    --bind 0.0.0.0:${PORT:-8000} --workers ${GUNICORN_WORKERS:-4} \
     --access-logfile - --error-logfile -
