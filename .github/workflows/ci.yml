@@ -42,8 +42,15 @@ jobs:
         run: ruff check app
 
       - name: Type check (mypy)
-        # Pre-existing SQLAlchemy Column-typing findings aren't blocking yet;
-        # this still surfaces new/regressed errors in the job output.
+        # Several dozen pre-existing errors, mostly Column[T]-vs-T mismatches
+        # from declarative Column() attributes (SQLAlchemy's legacy mapping
+        # style, used throughout app/modules/*/models.py, doesn't give mypy
+        # enough info to know an instance attribute is really a plain T).
+        # Fixing that means migrating every model to SQLAlchemy 2.0's
+        # Mapped[] annotations, which is real work on its own and out of
+        # scope here. continue-on-error keeps this from blocking merges on
+        # that pre-existing debt while still surfacing new/regressed errors
+        # in the job output for review.
         run: mypy app
         continue-on-error: true
 
@@ -67,5 +74,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint (eslint)
+        run: npm run lint
+
+      - name: Test (vitest)
+        run: npm test
+
       - name: Build
         run: npm run build
+
+  docker-build:
+    runs-on: ubuntu-latest
+    # Catches Dockerfile/build-context breakage (e.g. a dependency that
+    # resolves locally but not in a clean image, a bad COPY path) before it
+    # reaches a deploy -- no registry configured yet, so this builds and
+    # discards the images rather than pushing anywhere.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend prod image
+        run: docker build -f backend/Dockerfile.prod backend
+
+      - name: Build frontend prod image
+        run: docker build -f frontend/Dockerfile.prod frontend
